@@ -21,76 +21,60 @@ if ($needRenewal == 1) {
         return $response;
     }
 
-    // 1. Get Public IP
-    $ipUrl = "http://myip.ossav.com/";
-    $ip = trim(curl_get($ipUrl));
-    if (!$ip) {
-        exit("<error>Failed to retrieve IP address</error>");
-    }
+    // Step 1: Get Public IP
+    $ip = trim(curl_get("http://myip.ossav.com/"));
+    if (!$ip) exit("<error>Failed to retrieve IP address</error>");
 
-    // 2. Get Token
-    $tokenUrl = "https://ossav.com/OLC/EncToken.php?s=" . time() . "&1=" . urlencode($ip);
-    $token = trim(curl_get($tokenUrl));
-    if (!$token) {
-        exit("<error>Failed to retrieve token</error>");
-    }
+    // Step 2: Get Token
+    $token = trim(curl_get("https://ossav.com/OLC/EncToken.php?s=" . time() . "&1=" . urlencode($ip)));
+    if (!$token) exit("<error>Failed to retrieve token</error>");
 
-    // 3. Fetch Encrypted Data
+    // Step 3: Get Encrypted Data
     $headers = array(
         "User-Agent: OsSav Technology Ltd.",
         "OsSav-IpAddress: " . $ip,
         "OsSav-TokenData: " . $token
     );
-
     $encSslUrl = "https://ossav.com/OLC/EncSsl.php?s=" . time();
     $OsSavTPL = curl_get($encSslUrl, $headers);
-    if (empty($OsSavTPL)) {
-        exit("<error>Enc Data Not Found</error>");
-    }
+    if (empty($OsSavTPL)) exit("<error>Enc Data Not Found</error>");
 
-    // 4. Decryption Function
+    // Step 4: Decrypt Function
     function decrypt_data($data, $key, $iv) {
         $step1 = base64_decode($data);
-        if ($step1 === false) {
-            return "Step 1 (base64_decode) failed.";
-        }
+        if ($step1 === false) return "Step 1 (base64_decode) failed.";
         $step2 = gzinflate($step1);
-        if ($step2 === false) {
-            return "Step 2 (gzinflate) failed.";
-        }
+        if ($step2 === false) return "Step 2 (gzinflate) failed.";
         $step3 = openssl_decrypt($step2, "AES-256-CBC", $key, 0, $iv);
-        if ($step3 === false) {
-            return "Step 3 (openssl_decrypt) failed.";
-        }
+        if ($step3 === false) return "Step 3 (openssl_decrypt) failed.";
         $step4 = gzinflate($step3);
-        if ($step4 === false) {
-            return "Step 4 (gzinflate) failed.";
-        }
+        if ($step4 === false) return "Step 4 (gzinflate) failed.";
         return base64_decode($step4);
     }
 
-    // 5. Encryption Key and IV
-    $encryption_key = md5($ip);
-    $encryption_iv = substr(md5($token), 8, 16);
+    // Step 5: Key + IV
+    $key = md5($ip);
+    $iv = substr(md5($token), 8, 16);
 
-    // 6. Try Decryption (Retry Up to 3 Times)
+    // Step 6: Decrypt Data (Retry x3)
     $attempts = 3;
+    $dump = '';
     while ($attempts > 0) {
-        $decrypted_data = decrypt_data($OsSavTPL, $encryption_key, $encryption_iv);
+        $decrypted_data = decrypt_data($OsSavTPL, $key, $iv);
         if (!is_string($decrypted_data) || strpos($decrypted_data, "failed") === false) {
             $dump = $decrypted_data;
             break;
         }
         $attempts--;
-        usleep(500000);
+        usleep(500000); // 0.5s
     }
 
-    // 7. If decryption failed, output an error
+    // Step 7: Check Decryption
     if (strpos($dump, "failed") !== false || empty($dump)) {
         exit("<error>Decryption Failed: $dump</error>");
     }
 
-    // 8. Extract the actual data if encoded inside base64_decode()
+    // Step 8: Decode if base64-encoded in string
     if (strpos($dump, "base64_decode('") !== false) {
         $parts = explode("base64_decode('", $dump);
         if (isset($parts[1])) {
@@ -100,12 +84,15 @@ if ($needRenewal == 1) {
             exit("<error>Unexpected dump format</error>");
         }
     }
-}
 
-// 9. Output XML
-header('Content-type: application/xml');
-if (empty($dump)) {
-    exit("<error>No data received</error>");
+    // Step 9: Save XML output to file
+    $filePath = __DIR__ . "/plkgenowncps.xml";
+    if (!file_put_contents($filePath, $dump)) {
+        exit("<error>Failed to save XML to file</error>");
+    }
+
+    // Step 10: Confirmation
+    echo "XML saved to: plkgenowncps.xml\n";
+    exit;
 }
-die($dump);
 ?>
